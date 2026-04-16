@@ -1,0 +1,9 @@
+services:
+  dungeonslave:
+    build: .
+    container_name: DungeonSlave
+    restart: always
+    env_file:
+      - .env
+    volumes:
+      - .:/app
