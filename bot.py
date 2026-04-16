@@ -13,7 +13,14 @@ TOKEN = os.getenv("DISCORD_TOKEN")
 # --- DATA & Utilities --- 
 
 DUNGEON_ALIASES = {
-    "aa": "Algeth'ar Academy"
+    "aa": "Algeth'ar Academy",
+    "mc": "Maisara Caverns",
+    "mt": "Magisters' Terrace",
+    "pos": "Pit of Saron",
+    "ws": "Windrunner Spire",
+    "seat": "Seat of the Triumvirate",
+    "npx": "Nexus-Point Xenas",
+    "sr": "Skyreach"
 }
 
 def resolve_dungeon(name: str) -> str:
