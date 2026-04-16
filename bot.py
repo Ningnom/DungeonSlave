@@ -66,7 +66,7 @@ class LFGView(View):
         await interaction.response.edit_message(embed=self.create_embed(), view=self)
 
     @discord.ui.button(label="Healer", style=discord.ButtonStyle.green)
-    async def tank_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+    async def healer_button(self, interaction: discord.Interaction, button: discord.ui.Button):
         if self.slots["Healer"]:
             return await interaction.response.send_message("Healer slot is full!", ephemeral=True)
         self.slots["Healer"] = interaction.user
@@ -77,7 +77,7 @@ class LFGView(View):
         if len(self.slots["DPS"]) >= 3:
             return await interaction.response.send_message("DPS slots are full!", ephemeral=True)
         if interaction.user in self.slots["DPS"]:
-            return await interaction.response.send_message("You are already signed up!")
+            return await interaction.response.send_message("You are already signed up!", ephemeral=True)
         
         self.slots["DPS"].append(interaction.user)
         await interaction.response.edit_message(embed=self.create_embed(), view=self)
@@ -94,6 +94,8 @@ class DungeonSlave(commands.Bot):
     async def setup_hook(self):
         print("--- DungeonSlave Admin Mode ---")
         print("Bot initialised. Use !sync to update slash commands.")
+        bot.tree.copy_global_to(guild=ctx.guild)
+        await bot.tree.sync(guild=ctx.guild)
 
     async def on_ready(self):
         print(f"Loggin in as: {self.user.name}")
