@@ -32,16 +32,34 @@ def resolve_dungeon(name: str) -> str:
 
 class LFGView(View):
     """The interactive buttons for signing up."""
-    def __init__(self, creator: discord.Member, dungeon: str, level: int):
+    def __init__(self, creator: discord.Member, dungeon: str, level: int, initial_role: str):
         super().__init__(timeout=None)
         self.creator = creator
         self.dungeon = dungeon
         self.level = level
         self.slots = {"Tank": None, "Healer": None, "DPS": []}
 
+        if initial_role == "Tank":
+            self.slots["Tank"] = creator
+            self.tank_button.disabled = True
+        elif initial_role == "Healer":
+            self.slots["Healer"] = creator
+            self.healer_button.disabled = True
+        elif initial_role == "DPS":
+            self.slots["DPS"].append(creator)
+            if len(self.slots["DPS"]) >= 3:
+                self.dps_button.disabled = True
+
+    def is_user_in_group(self, user: discord.Member) -> bool:
+        """Helper to check if a user is already in any slot"""
+        if user == self.slots["Tank"]: return True
+        if user == self.slots["Healer"]: return True
+        if user in self.slots["DPS"]: return True
+        return False
+
     def create_embed(self):
         embed = discord.Embed(
-            title=f"New Mythic+ Run: {self.dungeon} + {self.level}",
+            title=f"{self.dungeon} +{self.level}",
             description=f"Host: {self.creator.mention}\nClick a button below to join!",
             color=discord.Color.blue()
         )
@@ -58,28 +76,38 @@ class LFGView(View):
 
         return embed
     
-    @discord.ui.button(label="Tank", style=discord.ButtonStyle.green)
-    async def tank_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+    @discord.ui.button(label="Tank", style=discord.ButtonStyle.blurple)
+    async def tank_button(self, interaction: discord.Interaction, button: Button):
+        if self.is_user_in_group(interaction.user):
+            return await interaction.response.send_message("You are already in this group!", ephemeral=True)
         if self.slots["Tank"]:
             return await interaction.response.send_message("Tank slot is full!", ephemeral=True)
         self.slots["Tank"] = interaction.user
+        button.disabled = True
         await interaction.response.edit_message(embed=self.create_embed(), view=self)
 
     @discord.ui.button(label="Healer", style=discord.ButtonStyle.green)
-    async def healer_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+    async def healer_button(self, interaction: discord.Interaction, button: Button):
+        if self.is_user_in_group(interaction.user):
+            return await interaction.response.send_message("You are already in this group!", ephemeral=True)
         if self.slots["Healer"]:
             return await interaction.response.send_message("Healer slot is full!", ephemeral=True)
         self.slots["Healer"] = interaction.user
+        button.disabled = True
         await interaction.response.edit_message(embed=self.create_embed(), view=self)
 
-    @discord.ui.button(label="DPS", style=discord.ButtonStyle.green)
-    async def dps_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+    @discord.ui.button(label="DPS", style=discord.ButtonStyle.red)
+    async def dps_button(self, interaction: discord.Interaction, button: Button):
+        if self.is_user_in_group(interaction.user):
+            return await interaction.response.send_message("You are already in this group!", ephemeral=True)        
         if len(self.slots["DPS"]) >= 3:
             return await interaction.response.send_message("DPS slots are full!", ephemeral=True)
         if interaction.user in self.slots["DPS"]:
             return await interaction.response.send_message("You are already signed up!", ephemeral=True)
         
         self.slots["DPS"].append(interaction.user)
+        if len(self.slots["DPS"]) >= 3:
+            button.disabled = True
         await interaction.response.edit_message(embed=self.create_embed(), view=self)
     
 
@@ -94,8 +122,6 @@ class DungeonSlave(commands.Bot):
     async def setup_hook(self):
         print("--- DungeonSlave Admin Mode ---")
         print("Bot initialised. Use !sync to update slash commands.")
-        bot.tree.copy_global_to(guild=ctx.guild)
-        await bot.tree.sync(guild=ctx.guild)
 
     async def on_ready(self):
         print(f"Loggin in as: {self.user.name}")
@@ -140,14 +166,7 @@ async def shutdown(ctx):
 async def lfg(interaction: discord.Interaction, dungeon: str, level: int, my_role: app_commands.Choice[str]):
     real_dungeon = resolve_dungeon(dungeon)
 
-    view = LFGView(interaction.user, real_dungeon, level)
-
-    if my_role.value == "Tank":
-        view.slots["Tank"] = interaction.user
-    elif my_role.value == "Healer":
-        view.slots["Healer"] = interaction.user
-    else:
-        view.slots["DPS"].append(interaction.user)
+    view = LFGView(interaction.user, real_dungeon, level, my_role.value)
 
     await interaction.response.send_message(
         content=f"{interaction.user.display_name} is looking for more!",
