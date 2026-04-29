@@ -3,7 +3,7 @@ import os
 from dotenv import load_dotenv
 from discord import app_commands
 from discord.ext import commands
-from discord.ui import Button, View
+from discord.ui import Button, View, Select
 
 
 # Load secret token
@@ -12,43 +12,49 @@ TOKEN = os.getenv("DISCORD_TOKEN")
 
 # --- DATA & Utilities --- 
 
-DUNGEON_ALIASES = {
-    "aa": "Algeth'ar Academy",
-    "mc": "Maisara Caverns",
-    "mt": "Magisters' Terrace",
-    "pos": "Pit of Saron",
-    "ws": "Windrunner Spire",
-    "seat": "Seat of the Triumvirate",
-    "npx": "Nexus-Point Xenas",
-    "sr": "Skyreach"
-}
-
-def resolve_dungeon(name: str) -> str:
-    name_lower = name.lower().strip()
-    return DUNGEON_ALIASES.get(name_lower, name.title())
+DUNGEON_CHOICES = [
+    app_commands.Choice(name="Algeth'ar Academy", value="Algeth'ar Academy"),
+    app_commands.Choice(name="Maisara Caverns", value="Maisara Caverns"),
+    app_commands.Choice(name="Magisters' Terrace", value="Magisters' Terrace"),
+    app_commands.Choice(name="Pit of Saron", value="Pit of Saron"),
+    app_commands.Choice(name="Windrunner Spire", value="Windrunner Spire"),
+    app_commands.Choice(name="Seat of the Triumvirate", value="Seat of the Triumvirate"),
+    app_commands.Choice(name="Nexus-Point Xenas", value="Nexus-Point Xenas"),
+    app_commands.Choice(name="Skyreach", value="Skyreach")
+]
 
 
 # --- UI Elements ---
 
 class LFGView(View):
     """The interactive buttons for signing up."""
-    def __init__(self, creator: discord.Member, dungeon: str, level: int, initial_role: str):
-        super().__init__(timeout=None)
+    def __init__(self, creator: discord.Member, dungeon: str, level: int, initial_role: str, looking_for: list):
+        super().__init__(timeout=3600)
         self.creator = creator
         self.dungeon = dungeon
         self.level = level
+        self.looking_for = looking_for
         self.slots = {"Tank": None, "Healer": None, "DPS": []}
 
         if initial_role == "Tank":
             self.slots["Tank"] = creator
-            self.tank_button.disabled = True
         elif initial_role == "Healer":
             self.slots["Healer"] = creator
-            self.healer_button.disabled = True
         elif initial_role == "DPS":
             self.slots["DPS"].append(creator)
-            if len(self.slots["DPS"]) >= 3:
-                self.dps_button.disabled = True
+
+        self._update_button_states()
+
+    def _update_button_states(self):
+        """Dynamically updates buttons if a role is full or wasn't requested."""
+        self.tank_button.disabled = ("Tank" not in self.looking_for) or (self.slots["Tank"] is not None)
+        self.healer_button.disabled = ("Healer" not in self.looking_for) or (self.slots["Healer"] is not None)
+        
+        dps_requested = sum(1 for role in self.looking_for if role.startswith("DPS"))
+        is_host_dps = 1 if self.creator in self.slots["DPS"] else 0
+        target_dps_count = min(3, is_host_dps + dps_requested)
+        
+        self.dps_button.disabled = (dps_requested == 0) or (len(self.slots["DPS"]) >= target_dps_count)
 
     def is_user_in_group(self, user: discord.Member) -> bool:
         """Helper to check if a user is already in any slot"""
@@ -61,55 +67,151 @@ class LFGView(View):
         embed = discord.Embed(
             title=f"{self.dungeon} +{self.level}",
             description=f"Host: {self.creator.mention}\nClick a button below to join!",
-            color=discord.Color.blue()
+            color=discord.Color.red()
         )
 
-        tank_val = self.slots["Tank"].mention if self.slots["Tank"] else "Empty"
-        heal_val = self.slots["Healer"].mention if self.slots["Healer"] else "Empty"
+        # --- Tank ---
+        if self.slots["Tank"]:
+            tank_val = self.slots["Tank"].mention
+        elif "Tank" not in self.looking_for:
+            tank_val = "*Filled*"
+        else:
+            tank_val = "Empty"
+
+        # --- Healer ---
+        if self.slots["Healer"]:
+            heal_val = self.slots["Healer"].mention
+        elif "Healer" not in self.looking_for:
+            heal_val = "*Filled*"
+        else:
+            heal_val = "Empty"
+
+        # --- DPS ---
         dps_list = [m.mention for m in self.slots["DPS"]]
-        while len(dps_list) < 3:
+
+        dps_requested = sum(1 for role in self.looking_for if role.startswith("DPS"))
+        is_host_dps = 1 if self.creator in self.slots["DPS"] else 0
+        target_dps_count = min(3, is_host_dps + dps_requested)
+
+        while len(dps_list) < target_dps_count:
             dps_list.append("Empty")
 
+        while len(dps_list) < 3:
+            dps_list.append("*Filled*")
+
+        # Add embeds 
         embed.add_field(name="Tank", value=tank_val, inline=True)
         embed.add_field(name="Healer", value=heal_val, inline=True)
         embed.add_field(name="DPS", value="\n".join(dps_list), inline=True)
 
         return embed
     
+    async def on_timeout(self):
+        """Called automatically when the timeout expires."""
+        for child in self.children:
+            child.disabled = True
+        
+        if self.message:
+            embed = self.create_embed()
+            embed.color = discord.Color.dark_gray()
+            embed.set_footer(text="This group has timed out.")
+            try:
+                await self.message.edit(embed=embed, view=self)
+            except discord.HTTPException:
+                pass
+
+
     @discord.ui.button(label="Tank", style=discord.ButtonStyle.blurple)
     async def tank_button(self, interaction: discord.Interaction, button: Button):
         if self.is_user_in_group(interaction.user):
             return await interaction.response.send_message("You are already in this group!", ephemeral=True)
-        if self.slots["Tank"]:
-            return await interaction.response.send_message("Tank slot is full!", ephemeral=True)
         self.slots["Tank"] = interaction.user
-        button.disabled = True
+        self._update_button_states()
         await interaction.response.edit_message(embed=self.create_embed(), view=self)
 
     @discord.ui.button(label="Healer", style=discord.ButtonStyle.green)
     async def healer_button(self, interaction: discord.Interaction, button: Button):
         if self.is_user_in_group(interaction.user):
             return await interaction.response.send_message("You are already in this group!", ephemeral=True)
-        if self.slots["Healer"]:
-            return await interaction.response.send_message("Healer slot is full!", ephemeral=True)
         self.slots["Healer"] = interaction.user
-        button.disabled = True
+        self._update_button_states()
         await interaction.response.edit_message(embed=self.create_embed(), view=self)
 
     @discord.ui.button(label="DPS", style=discord.ButtonStyle.red)
     async def dps_button(self, interaction: discord.Interaction, button: Button):
         if self.is_user_in_group(interaction.user):
             return await interaction.response.send_message("You are already in this group!", ephemeral=True)        
-        if len(self.slots["DPS"]) >= 3:
-            return await interaction.response.send_message("DPS slots are full!", ephemeral=True)
-        if interaction.user in self.slots["DPS"]:
-            return await interaction.response.send_message("You are already signed up!", ephemeral=True)
-        
         self.slots["DPS"].append(interaction.user)
-        if len(self.slots["DPS"]) >= 3:
-            button.disabled = True
+        self._update_button_states()
         await interaction.response.edit_message(embed=self.create_embed(), view=self)
     
+    @discord.ui.button(label="Cancel", style=discord.ButtonStyle.gray)
+    async def cancel_button(self, interaction: discord.Interaction, button: Button):
+        """Allows the host to delete the group posting."""
+        if interaction.user != self.creator:
+            return await interaction.response.send_message("Only the group host can cancel this run!", ephemeral=True)
+        await interaction.message.delete()
+        self.stop()
+
+
+
+class LFGSetupView(View):
+    """The ephemeral setup menu presented to the user after typing /lfg"""
+    def __init__(self, dungeon: str, level: int):
+        super().__init__(timeout=300)
+        self.dungeon = dungeon
+        self.level = level
+        self.my_role = None
+        self.looking_for = []
+
+    @discord.ui.select(placeholder="Select your role", row=0, options=[
+        discord.SelectOption(label="Tank"),
+        discord.SelectOption(label="Healer"),
+        discord.SelectOption(label="DPS")
+    ])
+    async def select_my_role(self, interaction: discord.Interaction, select: Select):
+        self.my_role = select.values[0]
+        await interaction.response.defer()
+
+    @discord.ui.select(placeholder="What roles are you looking for?", row=1, min_values=1, max_values=5, options=[
+        discord.SelectOption(label="Tank"),
+        discord.SelectOption(label="Healer"),
+        discord.SelectOption(label="DPS", value="DPS 1"),
+        discord.SelectOption(label="DPS", value="DPS 2"),
+        discord.SelectOption(label="DPS", value="DPS 3")
+    ])
+    async def select_looking_for(self, interaction: discord.Interaction, select: Select):
+        self.looking_for = select.values
+        await interaction.response.defer()
+    
+    @discord.ui.button(label="Create Group", style=discord.ButtonStyle.green, row=2)
+    async def btn_create(self, interaction: discord.Interaction, button: Button):
+        if not self.my_role or not self.looking_for:
+            return await interaction.response.send_message("Please select an option from all dropdown menus before creating the group.", ephemeral=True)
+        
+        public_view = LFGView(
+            creator=interaction.user,
+            dungeon=self.dungeon,
+            level=self.level,
+            initial_role=self.my_role,
+            looking_for=self.looking_for
+        )
+
+        msg = await interaction.channel.send(
+            content=f"{interaction.user.mention} is looking for more!",
+            embed=public_view.create_embed(),
+            view=public_view
+        )
+
+        public_view.message = msg
+
+        await interaction.response.edit_message(content="Group created successfully!", view=None)
+
+    @discord.ui.button(label="Cancel", style=discord.ButtonStyle.red, row=2)
+    async def btn_cancel(self, interaction: discord.Interaction, button: Button):
+        await interaction.response.edit_message(content="Group creation cancelled.", view=None)
+
+
 
 # --- DungeonSlave Class ---
 
@@ -154,24 +256,17 @@ async def shutdown(ctx):
 
 @bot.tree.command(name="lfg", description="Create a dungeon group")
 @app_commands.describe(
-    dungeon="Name or alias (e.g., AA)",
-    level="Key level",
-    my_role="Your role"
+    dungeon="Select the dungeon",
+    level="Select the key level"
 )
-@app_commands.choices(my_role=[
-    app_commands.Choice(name="Tank", value="Tank"),
-    app_commands.Choice(name="Healer", value="Healer"),
-    app_commands.Choice(name="DPS", value="DPS")
-])
-async def lfg(interaction: discord.Interaction, dungeon: str, level: int, my_role: app_commands.Choice[str]):
-    real_dungeon = resolve_dungeon(dungeon)
-
-    view = LFGView(interaction.user, real_dungeon, level, my_role.value)
+@app_commands.choices(dungeon=DUNGEON_CHOICES)
+async def lfg(interaction: discord.Interaction, dungeon: app_commands.Choice[str], level: app_commands.Range[int, 2, 25]):
+    setup_view = LFGSetupView(dungeon=dungeon.value, level=level)
 
     await interaction.response.send_message(
-        content=f"{interaction.user.display_name} is looking for more!",
-        embed=view.create_embed(),
-        view=view
+        content=f"Setting up group for **{dungeon.value} +{level}**:",
+        view=setup_view,
+        ephemeral=True
     )
 
 
