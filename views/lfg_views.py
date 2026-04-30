@@ -67,12 +67,13 @@ class LFGView(View):
         dps_requested = sum(1 for role in self.looking_for if role.startswith("DPS"))
         is_host_dps = 1 if self.creator in self.slots["DPS"] else 0
         target_dps_count = min(3, is_host_dps + dps_requested)
-
-        while len(dps_list) < target_dps_count:
-            dps_list.append("Empty")
+        unrequested_slots = 3 - target_dps_count
+        
+        for _ in range(unrequested_slots):
+            dps_list.append("*Filled*")
 
         while len(dps_list) < 3:
-            dps_list.append("*Filled*")
+            dps_list.append("Empty")
 
         # Add embeds 
         embed.add_field(name="Tank", value=tank_val, inline=True)
@@ -145,15 +146,47 @@ class LFGSetupView(View):
     ])
     async def select_my_role(self, interaction: discord.Interaction, select: Select):
         self.my_role = select.values[0]
-        await interaction.response.defer()
 
-    @discord.ui.select(placeholder="What roles are you looking for?", row=1, min_values=1, max_values=5, options=[
-        discord.SelectOption(label="Tank"),
-        discord.SelectOption(label="Healer"),
-        discord.SelectOption(label="DPS", value="DPS 1"),
-        discord.SelectOption(label="DPS", value="DPS 2"),
-        discord.SelectOption(label="DPS", value="DPS 3")
-    ])
+        looking_for_select = None
+        for child in self.children:
+            if isinstance(child, Select) and child.placeholder == "What roles are you looking for?":
+                looking_for_select = child
+                break
+        
+        if looking_for_select:
+            new_options = []
+            if self.my_role != "Tank":
+                new_options.append(discord.SelectOption(label="Tank"))
+            if self.my_role != "Healer":
+                new_options.append(discord.SelectOption(label="Healer"))
+            if self.my_role == "DPS":
+                new_options.append(discord.SelectOption(label="DPS", value="DPS 1"))
+                new_options.append(discord.SelectOption(label="DPS", value="DPS 2"))
+            else:
+                new_options.append(discord.SelectOption(label="DPS", value="DPS 1"))
+                new_options.append(discord.SelectOption(label="DPS", value="DPS 2"))
+                new_options.append(discord.SelectOption(label="DPS", value="DPS 3"))
+        
+            looking_for_select.options = new_options
+            looking_for_select.max_values = len(new_options)
+            looking_for_select.disabled = False
+        
+        await interaction.response.edit_message(view=self)
+
+    @discord.ui.select(
+            placeholder="What roles are you looking for?", 
+            row=1, 
+            min_values=1, 
+            max_values=5, 
+            disabled=True,
+            options=[
+                discord.SelectOption(label="Tank"),
+                discord.SelectOption(label="Healer"),
+                discord.SelectOption(label="DPS", value="DPS 1"),
+                discord.SelectOption(label="DPS", value="DPS 2"),
+                discord.SelectOption(label="DPS", value="DPS 3")
+        ]
+    )
     async def select_looking_for(self, interaction: discord.Interaction, select: Select):
         self.looking_for = select.values
         await interaction.response.defer()
@@ -162,6 +195,21 @@ class LFGSetupView(View):
     async def btn_create(self, interaction: discord.Interaction, button: Button):
         if not self.my_role or not self.looking_for:
             return await interaction.response.send_message("Please select an option from all dropdown menus before creating the group.", ephemeral=True)
+        
+        mentions = []
+        if interaction.guild:
+            if "Tank" in self.looking_for:
+                role = discord.utils.get(interaction.guild.roles, name="Tank")
+                mentions.append(role.mention if role else "@Tank")
+            if "Healer" in self.looking_for:
+                role = discord.utils.get(interaction.guild.roles, name="Healer")
+                mentions.append(role.mention if role else "@Healer")
+            if any(r.startswith("DPS") for r in self.looking_for):
+                role = discord.utils.get(interaction.guild.roles, name="DPS")
+                mentions.append(role.mention if role else "@DPS")
+        
+        mention_text = " ".join(mentions)
+
         public_view = LFGView(
             creator=interaction.user,
             dungeon=self.dungeon,
@@ -170,10 +218,11 @@ class LFGSetupView(View):
             looking_for=self.looking_for
         )
         msg = await interaction.channel.send(
-            content=f"{interaction.user.mention} is looking for more!",
+            content=f"{interaction.user.mention} is looking for more! {mention_text}",
             embed=public_view.create_embed(),
             view=public_view
         )
+        
         public_view.message = msg
         await interaction.response.edit_message(content="Group created successfully!", view=None)
 
